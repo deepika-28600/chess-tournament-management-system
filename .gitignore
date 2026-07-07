@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.*
+dist/
+build/
+coverage/
+*.log
+
+backend/node_modules/
+frontend/node_modules/
+
+__pycache__/
+*.pyc
+
+.vscode/
+.idea/
+backend_logs.txt

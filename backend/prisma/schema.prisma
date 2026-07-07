@@ -1,0 +1,387 @@
+// ============================================================================
+// Chess Tournament Management System - Prisma Schema
+// PostgreSQL database schema with full relational integrity
+// ============================================================================
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------------------
+// ENUMS
+// ----------------------------------------------------------------------------
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  ORGANIZER
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum PlayerStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum TournamentType {
+  KNOCKOUT
+  LEAGUE
+  ROUND_ROBIN
+  SWISS
+  RAPID
+  BLITZ
+  CLASSICAL
+}
+
+enum TournamentStatus {
+  UPCOMING
+  LIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum RegistrationStatus {
+  CONFIRMED
+  WAITING_LIST
+  WITHDRAWN
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LIVE
+  PAUSED
+  COMPLETED
+  WALKOVER
+  CANCELLED
+}
+
+enum MatchResult {
+  PLAYER_A_WIN
+  PLAYER_B_WIN
+  DRAW
+  WALKOVER_A
+  WALKOVER_B
+  PENDING
+}
+
+enum RoundStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum NotificationType {
+  SUCCESS
+  ERROR
+  WARNING
+  INFO
+}
+
+enum NotificationChannel {
+  SYSTEM
+  EMAIL
+  PUSH
+}
+
+// ----------------------------------------------------------------------------
+// USERS (Admin / Organizer accounts)
+// ----------------------------------------------------------------------------
+
+model User {
+  id                String    @id @default(uuid())
+  name              String
+  email             String    @unique
+  passwordHash      String    @map("password_hash")
+  role              UserRole  @default(ADMIN)
+  avatarUrl         String?   @map("avatar_url")
+  isActive          Boolean   @default(true) @map("is_active")
+  lastLoginAt       DateTime? @map("last_login_at")
+  refreshTokenHash  String?   @map("refresh_token_hash")
+  resetTokenHash    String?   @map("reset_token_hash")
+  resetTokenExpiry  DateTime? @map("reset_token_expiry")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  tournamentsOrganized Tournament[]     @relation("OrganizedBy")
+  activityLogs         ActivityLog[]
+  notifications        Notification[]
+  settings             Setting?
+
+  @@map("users")
+  @@index([email])
+}
+
+// ----------------------------------------------------------------------------
+// PLAYERS
+// ----------------------------------------------------------------------------
+
+model Player {
+  id             String       @id @default(uuid())
+  playerCode     String       @unique @map("player_code") // human readable ID e.g. PLY-000123
+  photoUrl       String?      @map("photo_url")
+  name           String
+  age            Int
+  gender         Gender
+  country        String
+  state          String?
+  city           String?
+  email          String       @unique
+  phone          String       @unique
+  fideRating     Int          @default(0) @map("fide_rating")
+  experienceYears Int         @default(0) @map("experience_years")
+  wins           Int          @default(0)
+  losses         Int          @default(0)
+  draws          Int          @default(0)
+  currentRank    Int?         @map("current_rank")
+  status         PlayerStatus @default(ACTIVE)
+  isDeleted      Boolean      @default(false) @map("is_deleted") // soft delete / recycle bin
+  deletedAt      DateTime?    @map("deleted_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  registrations   TournamentPlayer[]
+  matchesAsA      Match[]            @relation("PlayerA")
+  matchesAsB      Match[]            @relation("PlayerB")
+  matchesWon      Match[]            @relation("MatchWinner")
+  results         Result[]
+  rankings        Ranking[]
+
+  @@map("players")
+  @@index([name])
+  @@index([country])
+  @@index([fideRating])
+  @@index([status])
+}
+
+// ----------------------------------------------------------------------------
+// TOURNAMENTS
+// ----------------------------------------------------------------------------
+
+model Tournament {
+  id            String            @id @default(uuid())
+  name          String
+  slug          String            @unique
+  description   String?
+  location      String
+  organizerId   String            @map("organizer_id")
+  organizer     User              @relation("OrganizedBy", fields: [organizerId], references: [id])
+  startDate     DateTime          @map("start_date")
+  endDate       DateTime          @map("end_date")
+  maxPlayers    Int               @map("max_players")
+  entryFee      Decimal           @default(0) @db.Decimal(10, 2) @map("entry_fee")
+  prizePool     Decimal           @default(0) @db.Decimal(12, 2) @map("prize_pool")
+  type          TournamentType
+  bannerUrl     String?           @map("banner_url")
+  status        TournamentStatus  @default(UPCOMING)
+  totalRounds   Int               @default(0) @map("total_rounds")
+  isDeleted     Boolean           @default(false) @map("is_deleted")
+  deletedAt     DateTime?         @map("deleted_at")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  registrations TournamentPlayer[]
+  rounds        Round[]
+  matches       Match[]
+  results       Result[]
+  rankings      Ranking[]
+
+  @@map("tournaments")
+  @@index([status])
+  @@index([type])
+  @@index([startDate])
+}
+
+// ----------------------------------------------------------------------------
+// TOURNAMENT PLAYERS (registration join table)
+// ----------------------------------------------------------------------------
+
+model TournamentPlayer {
+  id             String              @id @default(uuid())
+  tournamentId   String              @map("tournament_id")
+  tournament     Tournament          @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  playerId       String              @map("player_id")
+  player         Player              @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  status         RegistrationStatus  @default(CONFIRMED)
+  seedNumber     Int?                @map("seed_number")
+  checkedIn      Boolean             @default(false) @map("checked_in")
+  checkedInAt    DateTime?           @map("checked_in_at")
+  registeredAt   DateTime            @default(now()) @map("registered_at")
+
+  @@map("tournament_players")
+  @@unique([tournamentId, playerId], name: "unique_registration")
+  @@index([tournamentId])
+  @@index([playerId])
+}
+
+// ----------------------------------------------------------------------------
+// ROUNDS
+// ----------------------------------------------------------------------------
+
+model Round {
+  id           String      @id @default(uuid())
+  tournamentId String      @map("tournament_id")
+  tournament   Tournament  @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  roundNumber  Int         @map("round_number")
+  status       RoundStatus @default(PENDING)
+  startedAt    DateTime?   @map("started_at")
+  completedAt  DateTime?   @map("completed_at")
+  createdAt    DateTime    @default(now()) @map("created_at")
+
+  matches Match[]
+
+  @@map("rounds")
+  @@unique([tournamentId, roundNumber], name: "unique_round")
+  @@index([tournamentId])
+}
+
+// ----------------------------------------------------------------------------
+// MATCHES
+// ----------------------------------------------------------------------------
+
+model Match {
+  id            String      @id @default(uuid())
+  tournamentId  String      @map("tournament_id")
+  tournament    Tournament  @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  roundId       String      @map("round_id")
+  round         Round       @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  playerAId     String?     @map("player_a_id")
+  playerA       Player?     @relation("PlayerA", fields: [playerAId], references: [id])
+  playerBId     String?     @map("player_b_id")
+  playerB       Player?     @relation("PlayerB", fields: [playerBId], references: [id])
+  isBye         Boolean     @default(false) @map("is_bye")
+  scoreA        Float       @default(0) @map("score_a")
+  scoreB        Float       @default(0) @map("score_b")
+  result        MatchResult @default(PENDING)
+  winnerId      String?     @map("winner_id")
+  winner        Player?     @relation("MatchWinner", fields: [winnerId], references: [id])
+  status        MatchStatus @default(SCHEDULED)
+  boardNumber   Int?        @map("board_number")
+  scheduledAt   DateTime?   @map("scheduled_at")
+  startedAt     DateTime?   @map("started_at")
+  pausedAt      DateTime?   @map("paused_at")
+  finishedAt    DateTime?   @map("finished_at")
+  durationSecs  Int?        @map("duration_secs")
+  remarks       String?
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  result_ Result?
+
+  @@map("matches")
+  @@index([tournamentId])
+  @@index([roundId])
+  @@index([status])
+}
+
+// ----------------------------------------------------------------------------
+// RESULTS (finalized outcome record, separate from live Match state)
+// ----------------------------------------------------------------------------
+
+model Result {
+  id           String     @id @default(uuid())
+  matchId      String     @unique @map("match_id")
+  match        Match      @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  tournamentId String     @map("tournament_id")
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  playerId     String     @map("player_id")
+  player       Player     @relation(fields: [playerId], references: [id])
+  points       Float
+  finalResult  MatchResult @map("final_result")
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  @@map("results")
+  @@index([tournamentId])
+  @@index([playerId])
+}
+
+// ----------------------------------------------------------------------------
+// RANKINGS (leaderboard snapshots per tournament + global)
+// ----------------------------------------------------------------------------
+
+model Ranking {
+  id           String      @id @default(uuid())
+  tournamentId String?     @map("tournament_id")
+  tournament   Tournament? @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  playerId     String      @map("player_id")
+  player       Player      @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  rankPosition Int         @map("rank_position")
+  points       Float       @default(0)
+  previousRank Int?        @map("previous_rank")
+  medal        String?     // GOLD | SILVER | BRONZE | null
+  computedAt   DateTime    @default(now()) @map("computed_at")
+
+  @@map("rankings")
+  @@index([tournamentId])
+  @@index([playerId])
+}
+
+// ----------------------------------------------------------------------------
+// NOTIFICATIONS
+// ----------------------------------------------------------------------------
+
+model Notification {
+  id        String              @id @default(uuid())
+  userId    String              @map("user_id")
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  channel   NotificationChannel @default(SYSTEM)
+  title     String
+  message   String
+  isRead    Boolean             @default(false) @map("is_read")
+  link      String?
+  createdAt DateTime            @default(now()) @map("created_at")
+
+  @@map("notifications")
+  @@index([userId])
+  @@index([isRead])
+}
+
+// ----------------------------------------------------------------------------
+// ACTIVITY LOGS
+// ----------------------------------------------------------------------------
+
+model ActivityLog {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action     String   // e.g. "PLAYER_CREATED", "TOURNAMENT_UPDATED"
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  metadata   Json?
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("activity_logs")
+  @@index([userId])
+  @@index([entityType])
+}
+
+// ----------------------------------------------------------------------------
+// SETTINGS (per-admin system preferences)
+// ----------------------------------------------------------------------------
+
+model Setting {
+  id                 String   @id @default(uuid())
+  userId             String   @unique @map("user_id")
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  theme              String   @default("light") // light | dark | system
+  language           String   @default("en")
+  emailNotifications Boolean  @default(true) @map("email_notifications")
+  pushNotifications  Boolean  @default(true) @map("push_notifications")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
